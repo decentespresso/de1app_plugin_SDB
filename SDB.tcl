@@ -1040,10 +1040,10 @@ proc ::plugins::SDB::get_shot_file_path { filename {relative_path 0} } {
 	}
 	
 	if { [file dirname $filename] eq "." } {
-		if { [file exists "${homedir}/history/$filename"] } {
-			set filename "[homedir]/history/$filename"
-		} elseif { [file exists "[homedir]/history_archive/$filename"] } {
-			set filename "${homedir}/history_archive/$filename"
+		if { [file exists "[data_directory]/history/$filename"] } {
+			set filename "[data_directory]/history/$filename"
+		} elseif { [file exists "[data_directory]/history_archive/$filename"] } {
+			set filename "[data_directory]/history_archive/$filename"
 		} else {
 			msg -NOTICE get_shot_file_path "can't find shot file '$filename'"
 			return ""
@@ -2035,8 +2035,8 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 		set db_shots(${filename}.shot) "$clock $file_modification_date $archived $removed"
 	}
 	
-	set files [lsort -dictionary [glob -nocomplain -tails -directory "[homedir]/history/" *.shot]]
-	set afiles [lsort -dictionary [glob -nocomplain -tails -directory "[homedir]/history_archive/" *.shot]]
+	set files [lsort -dictionary [glob -nocomplain -tails -directory "[data_directory]/history/" *.shot]]
+	set afiles [lsort -dictionary [glob -nocomplain -tails -directory "[data_directory]/history_archive/" *.shot]]
 	set n [expr {[llength $files]+[llength $afiles]}]
 	set msg_every [expr {int($n/10)}]
 	if { $msg_every > 10 } {
@@ -2055,12 +2055,12 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 			set something_changed 0
 			lappend db_shots($f) 1
 		
-			set fmtime [file mtime "[homedir]/history/$f"]
+			set fmtime [file mtime "[data_directory]/history/$f"]
 			set db_mtime [lindex $db_shots($f) 1]
 			if { $fmtime > $db_mtime } {
 				log_sql "Processing history/$f, as modif time ($fmtime=[clock format $fmtime -format $friendly_clock_format]) > DB modif time ($db_mtime=[clock format $db_mtime -format $friendly_clock_format])"
 				try {
-					array set shot [load_shot "[homedir]/history/$f"]
+					array set shot [load_shot "[data_directory]/history/$f"]
 					persist_shot shot $persist_desc $persist_series 0
 					incr cnt_modified
 					set something_changed 1
@@ -2075,7 +2075,7 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 					log_sql "Processing history/$f, as it needs its chart series added"
 					
 					try {
-						array set shot [load_shot "[homedir]/history/$f"]
+						array set shot [load_shot "[data_directory]/history/$f"]
 						persist_shot shot 0 1 0
 						incr cnt_modified
 						set something_changed 1
@@ -2105,7 +2105,7 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 		} else {
 			log_sql "Processing history/$f, as it's a new shot file not yet in the database"
 			try {
-				array set shot [load_shot "[homedir]/history/$f"]
+				array set shot [load_shot "[data_directory]/history/$f"]
 				persist_shot shot $persist_desc $persist_series 0
 				if { $update_screen == 1 } update
 				incr cnt_inserted
@@ -2131,12 +2131,12 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 		if { [info exists db_shots($f)] } {
 			set something_changed 0
 			lappend db_shots($f) 1
-			set fmtime [file mtime "[homedir]/history_archive/$f"]
+			set fmtime [file mtime "[data_directory]/history_archive/$f"]
 			set db_mtime [lindex $db_shots($f) 1]
 			if { $fmtime > $db_mtime } {
 				log_sql "Processing history_archive/$f, as modif time ($fmtime=[clock format $fmtime -format $friendly_clock_format]) > DB modif time ($db_mtime=[clock format $db_mtime -format $friendly_clock_format])"
 				try {
-					array set shot [load_shot "[homedir]/history_archive/$f"]
+					array set shot [load_shot "[data_directory]/history_archive/$f"]
 					persist_shot shot $persist_desc $persist_series 0
 					incr cnt_modified
 					set something_changed 1
@@ -2150,7 +2150,7 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 				if { $shot_has_series != 1 } {
 					log_sql "Processing history/$f, as it needs its chart series added"
 					try { 
-						array set shot [load_shot "[homedir]/history_archive/$f"]
+						array set shot [load_shot "[data_directory]/history_archive/$f"]
 						persist_shot shot 0 1 0
 						incr cnt_modified
 						set something_changed 1
@@ -2181,7 +2181,7 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 		} else {
 			log_sql "Processing history_archive/$f, as it's a new shot file not yet in the database"
 			try {
-				array set shot [load_shot "[homedir]/history_archive/$f"]
+				array set shot [load_shot "[data_directory]/history_archive/$f"]
 				persist_shot shot $persist_desc $persist_series 0
 				incr cnt_inserted
 			} on error err {
@@ -2524,7 +2524,7 @@ proc ::plugins::SDB::save_espresso_to_history_hook { args } {
 		# we miss the filename and the modification time, and we need to build some variables with a priority
 		# (like dose may come from DSx vars or from base vars). So, rather than replicate everything, we just read
 		# the just-written file, which is not highly efficient but it's very straightforward.
-		#set fn "[homedir]/history/[clock format $::settings(espresso_clock) -format $::DYE::filename_clock_format].shot"
+		#set fn "[data_directory]/history/[clock format $::settings(espresso_clock) -format $::DYE::filename_clock_format].shot"
 		array set shot [load_shot $::settings(espresso_clock)]
 		persist_shot shot $settings(db_persist_desc) $settings(db_persist_series) 1
 	}	
@@ -2821,10 +2821,10 @@ proc ::plugins::SDB::update_category { field_name old_value new_value { update_f
 	set i 0
 	foreach shot_file $filenames {
 		# Update in shot history files			
-		if { [file exists "[homedir]/history/${shot_file}.shot"] } {
-			set path "[homedir]/history/${shot_file}.shot"		
-		} elseif { [file exists "[homedir]/history_archive/${shot_file}.shot"] } {
-			set path "[homedir]/history_archive/${shot_file}.shot"		
+		if { [file exists "[data_directory]/history/${shot_file}.shot"] } {
+			set path "[data_directory]/history/${shot_file}.shot"		
+		} elseif { [file exists "[data_directory]/history_archive/${shot_file}.shot"] } {
+			set path "[data_directory]/history_archive/${shot_file}.shot"		
 		} else {
 			set path {}
 		}
