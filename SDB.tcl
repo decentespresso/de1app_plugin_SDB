@@ -5,7 +5,7 @@
 namespace eval ::plugins::SDB {
 	variable author "Enrique Bengoechea"
 	variable contact "enri.bengoechea@gmail.com"
-	variable version 1.26
+	variable version 1.27
 	variable github_repo ebengoechea/de1app_plugin_SDB
 	variable name [translate "Shot DataBase"]
 	variable description [translate "Keeps your shot history in a SQLite database, and provides functions to manage shot history files."]
@@ -1366,12 +1366,53 @@ proc ::plugins::SDB::modify_shot_file { path arr_new_settings { backup_file {} }
 	}
 	if { $write_file == 1 } {
 		write_file $path $espresso_data
-        set fbasename [file rootname [file tail $path]]
-        shot::convert_legacy_to_v2 $path "[homedir]/history_v2" "${fbasename}.json" 0
 		msg "Updated past espresso history file $path"
+		sync_v2_shot_file $path
 	}
 	
 	return $espresso_data	
+}
+
+# Regenerates history_v2/<basename>.json from an edited legacy .shot file, so both copies stay in sync.
+# Only updates an existing v2 file (archived shots without a v2 copy are left alone).
+# shot::convert_legacy_to_v2 overwrites ::settings, the espresso chart vectors, ::past_shot, ::shot::last and 
+# ::profile::current, so all of them are saved before and restored after the conversion.
+proc ::plugins::SDB::sync_v2_shot_file { path } {
+	set v2_dir "[data_directory]/history_v2"
+	set v2_filename "[file rootname [file tail $path]].json"
+	if { ![file exists "$v2_dir/$v2_filename"] || [info commands ::shot::convert_legacy_to_v2] eq "" } {
+		return
+	}
+	
+	array set settings_backup [array get ::settings]
+	foreach v [espresso_chart_structures] {
+		set chart_backup($v) {}
+		if { [$v length] > 0 } {
+			set chart_backup($v) [$v range 0 end]
+		}
+	}
+	set has_past_shot [array exists ::past_shot]
+	if { $has_past_shot } {
+		array set past_shot_backup [array get ::past_shot]
+	}
+	set shot_last_backup $::shot::last
+	set profile_current_backup $::profile::current
+	
+	if { [catch { ::shot::convert_legacy_to_v2 $path $v2_dir $v2_filename 0 } err] } {
+		msg -ERROR [namespace current] "sync_v2_shot_file: can't regenerate '$v2_dir/$v2_filename': $err"
+	}
+	
+	array set ::settings [array get settings_backup]
+	foreach v [espresso_chart_structures] {
+		$v length 0
+		$v append $chart_backup($v)
+	}
+	unset -nocomplain ::past_shot
+	if { $has_past_shot } {
+		array set ::past_shot [array get past_shot_backup]
+	}
+	set ::shot::last $shot_last_backup
+	set ::profile::current $profile_current_backup
 }
 
 proc ::plugins::SDB::db_path { } {

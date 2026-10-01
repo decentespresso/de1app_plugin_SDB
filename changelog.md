@@ -2,6 +2,12 @@
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.27] - 2026-10-01
+
+### Changed 
+ - Merge the ``readonly-data-directory`` branch (writes via ``[data_directory]``) with ``main``.
+ - ``modify_shot_file`` now regenerates the matching ``history_v2/<basename>.json`` after rewriting a legacy ``.shot`` file, so edits to past shots (beans, grinder, enjoyment, notes...) are no longer lost by v2 consumers. Uses ``[data_directory]``, only touches existing v2 files, and restores the app state (settings, espresso chart, ``::past_shot``, ``::shot::last``, ``::profile::current``) that the conversion overwrites. Replaces the earlier v2 save from 2024-05-13, which wrote to ``[homedir]`` and left the old shot's settings loaded in the app. See decentespresso/de1app#360.
+
 ## [1.26] - 2024-02-21
 
 ### Changed 
