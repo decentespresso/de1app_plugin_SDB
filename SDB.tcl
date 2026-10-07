@@ -1385,10 +1385,14 @@ proc ::plugins::SDB::sync_v2_shot_file { path } {
 	}
 	
 	array set settings_backup [array get ::settings]
+	set vectors {}
 	foreach v [espresso_chart_structures] {
-		set chart_backup($v) {}
-		if { [$v length] > 0 } {
-			set chart_backup($v) [$v range 0 end]
+		if { [info commands $v] ne "" } {
+			lappend vectors $v
+			set chart_backup($v) {}
+			if { [$v length] > 0 } {
+				set chart_backup($v) [$v range 0 end]
+			}
 		}
 	}
 	set has_past_shot [array exists ::past_shot]
@@ -1398,21 +1402,23 @@ proc ::plugins::SDB::sync_v2_shot_file { path } {
 	set shot_last_backup $::shot::last
 	set profile_current_backup $::profile::current
 	
-	if { [catch { ::shot::convert_legacy_to_v2 $path $v2_dir $v2_filename 0 } err] } {
+	try {
+		::shot::convert_legacy_to_v2 $path $v2_dir $v2_filename 0
+	} on error err {
 		msg -ERROR [namespace current] "sync_v2_shot_file: can't regenerate '$v2_dir/$v2_filename': $err"
+	} finally {
+		array set ::settings [array get settings_backup]
+		foreach v $vectors {
+			$v length 0
+			$v append $chart_backup($v)
+		}
+		unset -nocomplain ::past_shot
+		if { $has_past_shot } {
+			array set ::past_shot [array get past_shot_backup]
+		}
+		set ::shot::last $shot_last_backup
+		set ::profile::current $profile_current_backup
 	}
-	
-	array set ::settings [array get settings_backup]
-	foreach v [espresso_chart_structures] {
-		$v length 0
-		$v append $chart_backup($v)
-	}
-	unset -nocomplain ::past_shot
-	if { $has_past_shot } {
-		array set ::past_shot [array get past_shot_backup]
-	}
-	set ::shot::last $shot_last_backup
-	set ::profile::current $profile_current_backup
 }
 
 proc ::plugins::SDB::db_path { } {
