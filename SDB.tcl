@@ -5,7 +5,7 @@
 namespace eval ::plugins::SDB {
 	variable author "Enrique Bengoechea"
 	variable contact "enri.bengoechea@gmail.com"
-	variable version 1.26
+	variable version 1.27
 	variable github_repo ebengoechea/de1app_plugin_SDB
 	variable name [translate "Shot DataBase"]
 	variable description [translate "Keeps your shot history in a SQLite database, and provides functions to manage shot history files."]
@@ -1040,10 +1040,10 @@ proc ::plugins::SDB::get_shot_file_path { filename {relative_path 0} } {
 	}
 	
 	if { [file dirname $filename] eq "." } {
-		if { [file exists "${homedir}/history/$filename"] } {
-			set filename "[homedir]/history/$filename"
-		} elseif { [file exists "[homedir]/history_archive/$filename"] } {
-			set filename "${homedir}/history_archive/$filename"
+		if { [file exists "[data_directory]/history/$filename"] } {
+			set filename "[data_directory]/history/$filename"
+		} elseif { [file exists "[data_directory]/history_archive/$filename"] } {
+			set filename "[data_directory]/history_archive/$filename"
 		} else {
 			msg -NOTICE get_shot_file_path "can't find shot file '$filename'"
 			return ""
@@ -1366,12 +1366,59 @@ proc ::plugins::SDB::modify_shot_file { path arr_new_settings { backup_file {} }
 	}
 	if { $write_file == 1 } {
 		write_file $path $espresso_data
-        set fbasename [file rootname [file tail $path]]
-        shot::convert_legacy_to_v2 $path "[homedir]/history_v2" "${fbasename}.json" 0
 		msg "Updated past espresso history file $path"
+		sync_v2_shot_file $path
 	}
 	
 	return $espresso_data	
+}
+
+# Regenerates history_v2/<basename>.json from an edited legacy .shot file, so both copies stay in sync.
+# Only updates an existing v2 file (archived shots without a v2 copy are left alone).
+# shot::convert_legacy_to_v2 overwrites ::settings, the espresso chart vectors, ::past_shot, ::shot::last and 
+# ::profile::current, so all of them are saved before and restored after the conversion.
+proc ::plugins::SDB::sync_v2_shot_file { path } {
+	set v2_dir "[data_directory]/history_v2"
+	set v2_filename "[file rootname [file tail $path]].json"
+	if { ![file exists "$v2_dir/$v2_filename"] || [info commands ::shot::convert_legacy_to_v2] eq "" } {
+		return
+	}
+	
+	array set settings_backup [array get ::settings]
+	set vectors {}
+	foreach v [espresso_chart_structures] {
+		if { [info commands $v] ne "" } {
+			lappend vectors $v
+			set chart_backup($v) {}
+			if { [$v length] > 0 } {
+				set chart_backup($v) [$v range 0 end]
+			}
+		}
+	}
+	set has_past_shot [array exists ::past_shot]
+	if { $has_past_shot } {
+		array set past_shot_backup [array get ::past_shot]
+	}
+	set shot_last_backup $::shot::last
+	set profile_current_backup $::profile::current
+	
+	try {
+		::shot::convert_legacy_to_v2 $path $v2_dir $v2_filename 0
+	} on error err {
+		msg -ERROR [namespace current] "sync_v2_shot_file: can't regenerate '$v2_dir/$v2_filename': $err"
+	} finally {
+		array set ::settings [array get settings_backup]
+		foreach v $vectors {
+			$v length 0
+			$v append $chart_backup($v)
+		}
+		unset -nocomplain ::past_shot
+		if { $has_past_shot } {
+			array set ::past_shot [array get past_shot_backup]
+		}
+		set ::shot::last $shot_last_backup
+		set ::profile::current $profile_current_backup
+	}
 }
 
 proc ::plugins::SDB::db_path { } {
@@ -2037,8 +2084,8 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 		set db_shots(${filename}.shot) "$clock $file_modification_date $archived $removed"
 	}
 	
-	set files [lsort -dictionary [glob -nocomplain -tails -directory "[homedir]/history/" *.shot]]
-	set afiles [lsort -dictionary [glob -nocomplain -tails -directory "[homedir]/history_archive/" *.shot]]
+	set files [lsort -dictionary [glob -nocomplain -tails -directory "[data_directory]/history/" *.shot]]
+	set afiles [lsort -dictionary [glob -nocomplain -tails -directory "[data_directory]/history_archive/" *.shot]]
 	set n [expr {[llength $files]+[llength $afiles]}]
 	set msg_every [expr {int($n/10)}]
 	if { $msg_every > 10 } {
@@ -2057,12 +2104,12 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 			set something_changed 0
 			lappend db_shots($f) 1
 		
-			set fmtime [file mtime "[homedir]/history/$f"]
+			set fmtime [file mtime "[data_directory]/history/$f"]
 			set db_mtime [lindex $db_shots($f) 1]
 			if { $fmtime > $db_mtime } {
 				log_sql "Processing history/$f, as modif time ($fmtime=[clock format $fmtime -format $friendly_clock_format]) > DB modif time ($db_mtime=[clock format $db_mtime -format $friendly_clock_format])"
 				try {
-					array set shot [load_shot "[homedir]/history/$f"]
+					array set shot [load_shot "[data_directory]/history/$f"]
 					persist_shot shot $persist_desc $persist_series 0
 					incr cnt_modified
 					set something_changed 1
@@ -2077,7 +2124,7 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 					log_sql "Processing history/$f, as it needs its chart series added"
 					
 					try {
-						array set shot [load_shot "[homedir]/history/$f"]
+						array set shot [load_shot "[data_directory]/history/$f"]
 						persist_shot shot 0 1 0
 						incr cnt_modified
 						set something_changed 1
@@ -2107,7 +2154,7 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 		} else {
 			log_sql "Processing history/$f, as it's a new shot file not yet in the database"
 			try {
-				array set shot [load_shot "[homedir]/history/$f"]
+				array set shot [load_shot "[data_directory]/history/$f"]
 				persist_shot shot $persist_desc $persist_series 0
 				if { $update_screen == 1 } update
 				incr cnt_inserted
@@ -2133,12 +2180,12 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 		if { [info exists db_shots($f)] } {
 			set something_changed 0
 			lappend db_shots($f) 1
-			set fmtime [file mtime "[homedir]/history_archive/$f"]
+			set fmtime [file mtime "[data_directory]/history_archive/$f"]
 			set db_mtime [lindex $db_shots($f) 1]
 			if { $fmtime > $db_mtime } {
 				log_sql "Processing history_archive/$f, as modif time ($fmtime=[clock format $fmtime -format $friendly_clock_format]) > DB modif time ($db_mtime=[clock format $db_mtime -format $friendly_clock_format])"
 				try {
-					array set shot [load_shot "[homedir]/history_archive/$f"]
+					array set shot [load_shot "[data_directory]/history_archive/$f"]
 					persist_shot shot $persist_desc $persist_series 0
 					incr cnt_modified
 					set something_changed 1
@@ -2152,7 +2199,7 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 				if { $shot_has_series != 1 } {
 					log_sql "Processing history/$f, as it needs its chart series added"
 					try { 
-						array set shot [load_shot "[homedir]/history_archive/$f"]
+						array set shot [load_shot "[data_directory]/history_archive/$f"]
 						persist_shot shot 0 1 0
 						incr cnt_modified
 						set something_changed 1
@@ -2183,7 +2230,7 @@ proc ::plugins::SDB::populate { {persist_desc {}} { persist_series {}} {update_s
 		} else {
 			log_sql "Processing history_archive/$f, as it's a new shot file not yet in the database"
 			try {
-				array set shot [load_shot "[homedir]/history_archive/$f"]
+				array set shot [load_shot "[data_directory]/history_archive/$f"]
 				persist_shot shot $persist_desc $persist_series 0
 				incr cnt_inserted
 			} on error err {
@@ -2526,7 +2573,7 @@ proc ::plugins::SDB::save_espresso_to_history_hook { args } {
 		# we miss the filename and the modification time, and we need to build some variables with a priority
 		# (like dose may come from DSx vars or from base vars). So, rather than replicate everything, we just read
 		# the just-written file, which is not highly efficient but it's very straightforward.
-		#set fn "[homedir]/history/[clock format $::settings(espresso_clock) -format $::DYE::filename_clock_format].shot"
+		#set fn "[data_directory]/history/[clock format $::settings(espresso_clock) -format $::DYE::filename_clock_format].shot"
 		array set shot [load_shot $::settings(espresso_clock)]
 		persist_shot shot $settings(db_persist_desc) $settings(db_persist_series) 1
 	}	
@@ -2823,10 +2870,10 @@ proc ::plugins::SDB::update_category { field_name old_value new_value { update_f
 	set i 0
 	foreach shot_file $filenames {
 		# Update in shot history files			
-		if { [file exists "[homedir]/history/${shot_file}.shot"] } {
-			set path "[homedir]/history/${shot_file}.shot"		
-		} elseif { [file exists "[homedir]/history_archive/${shot_file}.shot"] } {
-			set path "[homedir]/history_archive/${shot_file}.shot"		
+		if { [file exists "[data_directory]/history/${shot_file}.shot"] } {
+			set path "[data_directory]/history/${shot_file}.shot"		
+		} elseif { [file exists "[data_directory]/history_archive/${shot_file}.shot"] } {
+			set path "[data_directory]/history_archive/${shot_file}.shot"		
 		} else {
 			set path {}
 		}
